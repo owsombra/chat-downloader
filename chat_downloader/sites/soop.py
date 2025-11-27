@@ -28,10 +28,9 @@ class SoopChatDownloader(BaseChatDownloader):
         '_get_chat': r"https?://play\.(?:sooplive\.co\.kr|afreecatv\.com)/(?P<username>\w+)(?:/(?P<bno>:\d+))?",
     }
 
-    _DEFAULT_ID = 'playsquad'
-    _DEFAULT_PW = 'g17JNU]}bI2}n$p'
-
-    queue = queue.Queue()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.queue = queue.Queue()
 
     async def _chat_callback(self, chat: AfreecaChat):
         timestamp = int(datetime.now(timezone.utc).timestamp() * 1e6)
@@ -99,7 +98,12 @@ class SoopChatDownloader(BaseChatDownloader):
             await client_websocket_response.close()
 
     async def get_chat_by_username(self, username, params):
-        cred = await UserCredential.login(params.get('afreeca-id', self._DEFAULT_ID), params.get('afreeca-pw', self._DEFAULT_PW))
+        id = params.get('afreeca-id', "")
+        pw = params.get('afreeca-pw', "")
+
+        assert id != "" and pw != "", "AfreecaTV login credentials are required (afreeca-id and afreeca-pw)"
+
+        cred = await UserCredential.login(id, pw)
         afreeca = AfreecaTV(credential=cred)
 
         self.chat_loader = await afreeca.create_chat(username)
