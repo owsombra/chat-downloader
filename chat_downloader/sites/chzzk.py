@@ -222,7 +222,7 @@ class ChzzkChatDownloader(BaseChatDownloader):
                 display_name = profile.get('nickname', '')
                 subscription = profile.get('streamingProperty', {}).get('subscription', None)
 
-        extras = orjson.loads(chat.get('extras', '{}'))
+        extras = orjson.loads(chat.get('extras') or '{}')
         emotes = extras.get('emojis')
         pay_amount = extras.get('payAmount')
 
