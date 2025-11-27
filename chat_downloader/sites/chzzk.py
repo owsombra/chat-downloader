@@ -91,17 +91,19 @@ class ChzzkChatDownloader(BaseChatDownloader):
     _DEFAULT_NID_AUT = "nVrU5HBws13iBYAnAa5D7bnZrUtp69cn6T+V7BHQIXhHrBexYt9yDBjPS2+YvWdb"
     _DEFAULT_NID_SES = "AAABoWkzOGZj+RIiu6C4Jakp+RdUsaMtRgLbMzO8kh5it7a34ADYVPTvZKtrw9hPNd88WgRjMbyB8+dYw00N+jJckHHo6Q9szDa7Gssw1B7jJF0KiwAi6REeaJa3sdQomN/mdrWEHqvlizYg8cKWaIgCc+evNveEoxcd8zwuRPlSorGWcg09gMPmGwhdFN+eT37sWkCY+gU3W0bbOMUsghZQ/ULUif5+Ghv2fq1gfEukHkbbdiEyRqKuhjjiFn1JNj2cb6Mc+cYBOsZOPFqJ5YuYUVYPKLxg5/jVaH++EmUWgEKonVIlL2f0mjEoIoXYEhwMT4b+iu/xo41IWA35am2RkTLu7rVwSIebVTGLL2W5DAapfUje02SZ+jyl6ynEuhHlHf5994/8IJFerfE2Nh9AhWbECzCRpSTDYaolysKQ/uvUtXxmcuUWCtrUAPZQuXWwE0jtpBUzqZjDFuTMG16EetA0b1K3RrlD2BXut1LlTyfXEyy6UgeoijDnR18X6WvamMT3LieM6Q+QOFI3lhrmYnqUEP+UoYpArIHDtAesgQuKwiai6q1ooIsvtVuAIp6Xdw=="
 
-    queue = queue.Queue()
-    terminated = False
-    chat_channel_id = None
-    live_channel_id = None
-    cookies = None
-    websocket: Optional[WebSocketApp]
-    websocket_thread: Optional[Thread] = None
-    timeout = 5
-    max_retries = 5
-    proxy_host = None
-    proxy_port = None
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        queue = queue.Queue()
+        terminated = False
+        chat_channel_id = None
+        live_channel_id = None
+        cookies = None
+        websocket: Optional[WebSocketApp]
+        websocket_thread: Optional[Thread] = None
+        timeout = 5
+        max_retries = 5
+        proxy_host = None
+        proxy_port = None
 
     def on_message(self, ws, message):
         if not message:
@@ -333,7 +335,8 @@ class ChzzkChatDownloader(BaseChatDownloader):
                     ping_payload=orjson.dumps({'ver': '3', 'cmd': ChatCommands.PING}),
                     # http_proxy_host=self.proxy_host,
                     # http_proxy_port=self.proxy_port
-                )
+                ),
+                daemon=True
             )
             self.websocket_thread.start()
         return is_live, live_id, live_title
