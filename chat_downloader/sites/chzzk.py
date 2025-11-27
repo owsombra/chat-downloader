@@ -93,17 +93,17 @@ class ChzzkChatDownloader(BaseChatDownloader):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        queue = queue.Queue()
-        terminated = False
-        chat_channel_id = None
-        live_channel_id = None
-        cookies = None
-        websocket: Optional[WebSocketApp]
-        websocket_thread: Optional[Thread] = None
-        timeout = 5
-        max_retries = 5
-        proxy_host = None
-        proxy_port = None
+        self.queue = queue.Queue()
+        self.terminated = False
+        self.chat_channel_id = None
+        self.live_channel_id = None
+        self.cookies = None
+        self.websocket: Optional[WebSocketApp]
+        self.websocket_thread: Optional[Thread] = None
+        self.timeout = 5
+        self.max_retries = 5
+        self.proxy_host = None
+        self.proxy_port = None
 
     def on_message(self, ws, message):
         if not message:
