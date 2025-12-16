@@ -240,8 +240,8 @@ class AfreecaChat:
                     if func.svc == svc:
                         await func(packet)
 
-        for callback in self.callbacks.get("all", []):
-            asyncio.create_task(callback(svc, packet))
+        for _callback in self.callbacks.get("all", []):
+            asyncio.create_task(_callback(svc, packet))
 
     @callback(ServiceCode.SVC_CHATMESG)
     async def _process_chat(self, packet: list[str]) -> None:
@@ -250,5 +250,23 @@ class AfreecaChat:
 
         chat = Chat(packet)
 
-        for callback in self.callbacks.get("chat", []):
-            asyncio.create_task(callback(chat))
+        for _callback in self.callbacks.get("chat", []):
+            asyncio.create_task(_callback(chat))
+
+    async def close(self) -> None:
+        for event, callbacks in self.callbacks.items():
+            callbacks.clear()
+
+        if self.credential._session:
+            await self.credential._session.close()
+
+        if self.session:
+            await self.session.close()
+
+        if self.keepalive_task:
+            self.keepalive_task.cancel()
+
+        if self.connection:
+            client_websocket_response = self.connection
+            self.connection = None
+            await client_websocket_response.close()

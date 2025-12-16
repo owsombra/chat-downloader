@@ -318,6 +318,9 @@ class ChzzkChatDownloader(BaseChatDownloader):
             self.websocket.close()
 
         is_live, live_id, live_title, self.chat_channel_id = self.get_channel_detail()
+        if not self.chat_channel_id:
+            raise SiteError(f'No chat channel id found for Chzzk live: {self.live_channel_id}')
+
         if is_live:
             self.server_id = sum([ord(c) for c in self.chat_channel_id]) % 9 + 1
             self.access_token = self.get_chat_access_token()
@@ -397,8 +400,8 @@ class ChzzkChatDownloader(BaseChatDownloader):
         self.live_channel_id = channel_id
         self.timeout = params.get('message_receive_timeout')
         self.cookies = {
-            "NID_AUT": params.get('NID_AUT', self._DEFAULT_NID_AUT),
-            "NID_SES": params.get('NID_SES', self._DEFAULT_NID_SES)
+            "NID_AUT": params.get('NID_AUT') or self._DEFAULT_NID_AUT,
+            "NID_SES": params.get('NID_SES') or self._DEFAULT_NID_SES
         }
         if self.session.proxies:
             proxy_full = self.session.proxies.get('https')

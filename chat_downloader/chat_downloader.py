@@ -107,6 +107,14 @@ class ChatDownloader():
                  chat_type='live',
                  ignore=None,
 
+                 # Soop
+                 SOOP_ID=None,
+                 SOOP_PW=None,
+
+                 # Chzzk
+                 NID_AUT=None,
+                 NID_SES=None,
+
                  # Twitch
                  message_receive_timeout=5,
                  buffer_size=4096

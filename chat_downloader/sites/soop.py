@@ -9,7 +9,7 @@ from ..debugging import (
 import asyncio
 import queue
 
-from .afreeca import AfreecaTV, Chat as AfreecaChat, UserCredential
+from .afreeca import AfreecaTV, Chat as AfreecaChat, UserCredential, GuestCredential
 from .afreeca.exceptions import NotStreamingError
 from datetime import datetime, timezone
 from threading import Thread
@@ -72,40 +72,26 @@ class SoopChatDownloader(BaseChatDownloader):
             log('error', e)
         finally:
             log('debug', 'Cleanup afreeca chat downloader')
-            self.chat_loader.remove_callback(self._chat_callback)
-            self.loop.create_task(self.close_all_aiohttp_connections())
-
-    def _get_empty_generator(self):
-        yield {}
-        return
+            self.loop.create_task(self.cleanup())
 
     def _get_chat(self, match, params):
         self.loop = asyncio.new_event_loop()
         chat = self.loop.run_until_complete(self.get_chat_by_username(match.group('username'), params))
         return chat
 
-    async def close_all_aiohttp_connections(self):
+    async def cleanup(self):
         log('info', 'Close all SoopChatDownloader connections')
-        if self.chat_loader.credential._session:
-            await self.chat_loader.credential._session.close()
-        if self.chat_loader.session:
-            await self.chat_loader.session.close()
-        if self.chat_loader.keepalive_task:
-            self.chat_loader.keepalive_task.cancel()
-        if self.chat_loader.connection:
-            client_websocket_response = self.chat_loader.connection
-            self.chat_loader.connection = None
-            await client_websocket_response.close()
+        await self.chat_loader.close()
 
     async def get_chat_by_username(self, username, params):
-        id = params.get('afreeca-id', "")
-        pw = params.get('afreeca-pw', "")
+        id = params.get('SOOP_ID')
+        pw = params.get('SOOP_PW')
+        if id and pw:
+            cred = await UserCredential.login(id, pw)
+        else:
+            cred = GuestCredential()
 
-        assert id != "" and pw != "", "AfreecaTV login credentials are required (afreeca-id and afreeca-pw)"
-
-        cred = await UserCredential.login(id, pw)
         afreeca = AfreecaTV(credential=cred)
-
         self.chat_loader = await afreeca.create_chat(username)
         self.chat_loader.add_callback(event='chat', callback=self._chat_callback)
 
@@ -122,12 +108,5 @@ class SoopChatDownloader(BaseChatDownloader):
             )
 
         except NotStreamingError:
-            await self.close_all_aiohttp_connections()
-            return Chat(
-                self._get_empty_generator(),
-                title='',
-                duration=None,
-                status='upcoming',
-                video_type='video',
-                id=''
-            )
+            await self.cleanup()
+            raise
