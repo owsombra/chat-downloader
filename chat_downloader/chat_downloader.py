@@ -280,7 +280,7 @@ class ChatDownloader():
                 chat.site = site_object
 
                 log('debug', f'Chat information: {chat.__dict__}')
-                log('info', f'Retrieving chat for "{chat.title}".')
+                log('info', f'Retrieving chat for "{chat.title}" - {chat.site._NAME}')
 
                 return chat
 
