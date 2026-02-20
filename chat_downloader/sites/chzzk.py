@@ -1,6 +1,8 @@
 import queue
+import random
 from json.decoder import JSONDecodeError
 from threading import Thread
+from time import sleep
 from typing import Optional
 
 import orjson
@@ -13,6 +15,7 @@ from ..utils.core import attempts
 from .common import BaseChatDownloader, Chat
 
 # NOTE: https://github.com/kimcore/chzzk/blob/main/src/chat/chat.ts
+
 
 class ChatCommands:
     # Define command codes as class attributes
@@ -49,47 +52,45 @@ class ChatType:
 
     def __str__(self):
         if self.code == ChatType.TEXT:
-            return 'text_message'
+            return "text_message"
         elif self.code == ChatType.IMAGE:
-            return 'image_message'
+            return "image_message"
         elif self.code == ChatType.STICKER:
-            return 'sticker_message'
+            return "sticker_message"
         elif self.code == ChatType.RICH:
-            return 'rich_message'
+            return "rich_message"
         elif self.code == ChatType.DONATION:
-            return 'donation_message'
+            return "donation_message"
         elif self.code == ChatType.SUBSCRIPTION:
-            return 'subscription_message'
+            return "subscription_message"
         elif self.code == ChatType.SYSTEM_MESSAGE:
-            return 'system_message'
+            return "system_message"
         elif self.code == ChatType.SYSTEM_ANNOUNCE:
-            return 'system_announce'
+            return "system_announce"
         else:
-            return f'unknown_message_{self.code}'
+            return f"unknown_message_{self.code}"
 
 
 class ChzzkChatDownloader(BaseChatDownloader):
-    _NAME = 'chzzk.naver.com'
+    _NAME = "chzzk.naver.com"
 
     _SITE_DEFAULT_PARAMS = {
-        'format': 'default',
+        "format": "default",
     }
 
     _VALID_URLS = {
         # e.g. 'https://chzzk.naver.com/live/channel_id'
-        '_get_chat_by_channel_id': r"https?://chzzk\.naver\.com/live/(?P<channel_id>[^/?]+)",
-
+        "_get_chat_by_channel_id": r"https?://chzzk\.naver\.com/live/(?P<channel_id>[^/?]+)",
         # e.g. 'https://chzzk.naver.com/video/video_id'
-        '_get_chat_by_video_id': r"https?://chzzk\.naver\.com/video/(?P<video_id>[^/?]+)",
+        "_get_chat_by_video_id": r"https?://chzzk\.naver\.com/video/(?P<video_id>[^/?]+)",
     }
 
     _ACCESS_TOKEN_URL = "https://comm-api.game.naver.com/nng_main/v1/chats/access-token?channelId={chat_channel_id}&chatType=STREAMING"
-    _LIVE_DETAIL_URL = "https://api.chzzk.naver.com/service/v3.2/channels/{channel_id}/live-detail"
+    _LIVE_DETAIL_URL = (
+        "https://api.chzzk.naver.com/service/v3.3/channels/{channel_id}/live-detail"
+    )
     _VOD_DETAIL_URL = "https://api.chzzk.naver.com/service/v3/videos/{vod_id}"
     _VOD_CHAT_URL = "https://api.chzzk.naver.com/service/v1/videos/{vod_id}/chats?playerMessageTime={player_message_time}"
-
-    _DEFAULT_NID_AUT = "nVrU5HBws13iBYAnAa5D7bnZrUtp69cn6T+V7BHQIXhHrBexYt9yDBjPS2+YvWdb"
-    _DEFAULT_NID_SES = "AAABoWkzOGZj+RIiu6C4Jakp+RdUsaMtRgLbMzO8kh5it7a34ADYVPTvZKtrw9hPNd88WgRjMbyB8+dYw00N+jJckHHo6Q9szDa7Gssw1B7jJF0KiwAi6REeaJa3sdQomN/mdrWEHqvlizYg8cKWaIgCc+evNveEoxcd8zwuRPlSorGWcg09gMPmGwhdFN+eT37sWkCY+gU3W0bbOMUsghZQ/ULUif5+Ghv2fq1gfEukHkbbdiEyRqKuhjjiFn1JNj2cb6Mc+cYBOsZOPFqJ5YuYUVYPKLxg5/jVaH++EmUWgEKonVIlL2f0mjEoIoXYEhwMT4b+iu/xo41IWA35am2RkTLu7rVwSIebVTGLL2W5DAapfUje02SZ+jyl6ynEuhHlHf5994/8IJFerfE2Nh9AhWbECzCRpSTDYaolysKQ/uvUtXxmcuUWCtrUAPZQuXWwE0jtpBUzqZjDFuTMG16EetA0b1K3RrlD2BXut1LlTyfXEyy6UgeoijDnR18X6WvamMT3LieM6Q+QOFI3lhrmYnqUEP+UoYpArIHDtAesgQuKwiai6q1ooIsvtVuAIp6Xdw=="
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -98,7 +99,7 @@ class ChzzkChatDownloader(BaseChatDownloader):
         self.chat_channel_id = None
         self.live_channel_id = None
         self.cookies = None
-        self.websocket: Optional[WebSocketApp]
+        self.websocket: Optional[WebSocketApp] = None
         self.websocket_thread: Optional[Thread] = None
         self.timeout = 5
         self.max_retries = 5
@@ -111,53 +112,53 @@ class ChzzkChatDownloader(BaseChatDownloader):
 
         try:
             raw_msg = orjson.loads(message)
-            cmd = raw_msg.get('cmd')
+            cmd = raw_msg.get("cmd")
             if cmd == ChatCommands.CONNECTED:
-                log('info', f'Connected to {self.chat_channel_id}...')
-                self.sid = raw_msg['bdy']['sid']
-                self.send_json({
-                    "ver": "3",
-                    "svcid": "game",
-                    "cid": self.chat_channel_id,
-                    "cmd": ChatCommands.REQUEST_RECENT_CHAT,
-                    "tid": 2,
-                    "sid": self.sid,
-                    "bdy": {
-                        'recentMessageCount': 50
+                log("info", f"Connected to {self.chat_channel_id}...")
+                self.sid = raw_msg["bdy"]["sid"]
+                self.send_json(
+                    {
+                        "ver": "3",
+                        "svcid": "game",
+                        "cid": self.chat_channel_id,
+                        "cmd": ChatCommands.REQUEST_RECENT_CHAT,
+                        "tid": 2,
+                        "sid": self.sid,
+                        "bdy": {"recentMessageCount": 50},
                     }
-                })
+                )
                 return
             elif cmd == ChatCommands.PING:
-                self.send_json({'ver': '3', 'cmd': ChatCommands.PONG})
+                self.send_json({"ver": "3", "cmd": ChatCommands.PONG})
                 return
             elif cmd == ChatCommands.PONG:
                 return
 
-            if 'bdy' not in raw_msg:
+            if "bdy" not in raw_msg:
                 return
 
-            raw_body = raw_msg['bdy']
+            raw_body = raw_msg["bdy"]
             if isinstance(raw_body, list):
                 chat_msgs = raw_body
             elif isinstance(raw_body, dict):
-                chat_msgs = raw_body.get('messageList', [raw_body])
+                chat_msgs = raw_body.get("messageList", [raw_body])
             else:
-                log('error', f'Unknown format: {raw_body}')
+                log("error", f"Unknown format: {raw_body}")
                 return
 
             for chat_msg in chat_msgs:
                 data = self._parse_chat(chat_msg)
                 self.queue.put(data)
         except Exception as e:
-            log('error', f'Parsing message failed({e}): {message}')
+            log("error", f"Parsing message failed({e}): {message}")
 
     def on_error(self, ws, error):
         # maybe this can be change of cid, retrieve info once more to confirm
-        log('error', f'Websocket Error: {error}')
+        log("error", f"Websocket Error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
         # probably only when server requested to close
-        log('info', '### Websocket closed ###')
+        log("info", "### Websocket closed ###")
         if not self.terminated:
             # not closed by request, try again
             is_live, _, _ = self.connect_websocket()
@@ -166,128 +167,141 @@ class ChzzkChatDownloader(BaseChatDownloader):
                 self.terminate()
 
     def on_open(self, ws):
-        log('info', 'Opened connection')
-        self.send_json({
-            "ver": "3",
-            "svcid": "game",
-            "cid": self.chat_channel_id,
-            "cmd": ChatCommands.CONNECT,
-            "tid": 1,
-            "bdy": {
-                "uid": None,
-                "devName": "Google Chrome/129.0.0.0",
-                "timezone": "Asia/Seoul",
-                "devType": 2001,
-                "libVer": "4.9.3",
-                "locale": "ko",
-                "osVer": "Windows/10",
-                "accTkn": self.access_token,
-                "auth": "READ"
+        log("info", "Opened connection")
+        self.send_json(
+            {
+                "ver": "3",
+                "svcid": "game",
+                "cid": self.chat_channel_id,
+                "cmd": ChatCommands.CONNECT,
+                "tid": 1,
+                "bdy": {
+                    "uid": None,
+                    "devName": "Google Chrome/129.0.0.0",
+                    "timezone": "Asia/Seoul",
+                    "devType": 2001,
+                    "libVer": "4.9.3",
+                    "locale": "ko",
+                    "osVer": "Windows/10",
+                    "accTkn": self.access_token,
+                    "auth": "READ",
+                },
             }
-        })
+        )
 
     def send_json(self, data):
-        self.websocket.send(orjson.dumps(data))
+        if self.websocket:
+            self.websocket.send(orjson.dumps(data))
 
     def _parse_chat(self, chat):
-        message_time = chat.get('messageTime') or chat.get('msgTime')
+        message_time = chat.get("messageTime") or chat.get("msgTime")
         if not message_time:
             return {}
 
-        message = chat.get('content') or chat.get('msg')
-        message_type = chat.get('messageTypeCode') or chat.get('msgTypeCode')
-        user_id = chat.get('userIdHash') or chat.get('uid') or chat.get('userId')
-        time_in_seconds = chat.get('playerMessageTime')
-        member_count = chat.get('mbrCnt') or chat.get('memberCount')
+        message = chat.get("content") or chat.get("msg")
+        message_type = chat.get("messageTypeCode") or chat.get("msgTypeCode")
+        user_id = chat.get("userIdHash") or chat.get("uid") or chat.get("userId")
+        time_in_seconds = chat.get("playerMessageTime")
+        member_count = chat.get("mbrCnt") or chat.get("memberCount")
 
         # Skip system messages
-        if message_type in (ChatType.SYSTEM_MESSAGE, ChatType.SYSTEM_ANNOUNCE,):
-            log('info', f'Skip Chzzk message_type {message_type}: {chat}')
+        if message_type in (
+            ChatType.SYSTEM_MESSAGE,
+            ChatType.SYSTEM_ANNOUNCE,
+        ):
+            log("info", f"Skip Chzzk message_type {message_type}: {chat}")
             return {}
-        if 'profile' not in chat and 'extras' not in chat:
-            log('info', f'Skip Chzzk message: {chat}')
+        if "profile" not in chat and "extras" not in chat:
+            log("info", f"Skip Chzzk message: {chat}")
             return {}
 
         # NOTE: `profile` can be `None`, `"null"`
-        raw_profile = chat.get('profile', '{}')
+        raw_profile = chat.get("profile", "{}")
         if not raw_profile:
-            display_name = ''
+            display_name = ""
             subscription = None
         else:
             profile = orjson.loads(raw_profile)
             if type(profile) is not dict:
-                display_name = ''
+                display_name = ""
                 subscription = None
             else:
-                display_name = profile.get('nickname', '')
-                streaming_property = profile.get('streamingProperty') or {}  # nullable
-                subscription = streaming_property.get('subscription', None)
+                display_name = profile.get("nickname", "")
+                streaming_property = profile.get("streamingProperty") or {}  # nullable
+                subscription = streaming_property.get("subscription", None)
 
-        extras = orjson.loads(chat.get('extras') or '{}')
-        emotes = extras.get('emojis')
-        pay_amount = extras.get('payAmount')
+        extras = orjson.loads(chat.get("extras") or "{}")
+        emotes = extras.get("emojis")
+        pay_amount = extras.get("payAmount")
 
         data = {
-            'timestamp': message_time * 1000,
-            'message_id': f'{user_id}-{message_time}',
-            'message': message,
-            'message_type': str(ChatType(message_type)),
-            'author': {
-                'display_name': display_name,
-                'id': user_id,
-                'subscription': subscription,
-            }
+            "timestamp": message_time * 1000,
+            "message_id": f"{user_id}-{message_time}",
+            "message": message,
+            "message_type": str(ChatType(message_type)),
+            "author": {
+                "display_name": display_name,
+                "id": user_id,
+                "subscription": subscription,
+            },
         }
 
         if time_in_seconds:
-            data['time_in_seconds'] = time_in_seconds / 1000
+            data["time_in_seconds"] = time_in_seconds / 1000
 
         if member_count:
-            data['member_count'] = member_count
+            data["member_count"] = member_count
 
         if extras:
-            data['extras'] = extras
+            data["extras"] = extras
 
         if emotes:
-            data['emotes'] = emotes
+            data["emotes"] = emotes
 
         if pay_amount:
-            data['pay_amount'] = pay_amount
+            data["pay_amount"] = pay_amount
 
         return data
 
     def _get_chat_by_video_id(self, match, params):
-        return self.get_chat_by_video_id(match.group('video_id'), params)
+        return self.get_chat_by_video_id(match.group("video_id"), params)
 
+    # Entry point for VOD
     def get_chat_by_video_id(self, vod_id, params):
-        self.cookies = {
-            "NID_AUT": params.get('NID_AUT', self._DEFAULT_NID_AUT),
-            "NID_SES": params.get('NID_SES', self._DEFAULT_NID_SES)
-        }
+        NID_AUT = params.get("NID_AUT")
+        NID_SES = params.get("NID_SES")
+        if NID_AUT and NID_SES:
+            self.cookies = {
+                "NID_AUT": NID_AUT,
+                "NID_SES": NID_SES,
+            }
 
+        is_available = False
+        video = {}
         for attempt_number in attempts(self.max_retries):
             try:
-                resp = self._session_get_json(self._VOD_DETAIL_URL.format(vod_id=vod_id),
-                                              cookies=self.cookies)
-                is_available = resp.get('code') == 200
-                video = resp.get('content', {})
+                resp = self._session_get_json(
+                    self._VOD_DETAIL_URL.format(vod_id=vod_id), cookies=self.cookies
+                )
+                is_available = resp.get("code") == 200
+                video = resp.get("content", {})
                 break
             except RequestException as e:
                 self.retry(attempt_number, error=e, **params)
 
         if not is_available:
-            raise VideoUnavailable('Not available Chzzk vod...')
+            raise VideoUnavailable("Not available Chzzk vod...")
 
-        title = video.get('videoTitle')
-        duration = video.get('duration')
+        title = video.get("videoTitle", "")
+        duration = video.get("duration")
 
         return Chat(
             self._get_chat_messages_by_vod_id(vod_id, params, duration),
             title=title,
             duration=duration,
-            status='past',
-            video_type='video',
-            id=vod_id
+            status="past",
+            video_type="video",
+            id=vod_id,
         )
 
     def _get_chat_messages_by_vod_id(self, vod_id, params, max_duration):
@@ -295,37 +309,50 @@ class ChzzkChatDownloader(BaseChatDownloader):
         while next_player_message_time is not None:
             for attempt_number in attempts(self.max_retries):
                 try:
-                    resp = self._session_get_json(self._VOD_CHAT_URL.format(vod_id=vod_id, player_message_time=next_player_message_time),
-                                                  cookies=self.cookies)
-                    is_valid_resp = resp.get('code') == 200
-                    if not is_valid_resp:
-                        raise UnexpectedError(f'Chzzk VOD chat retrieve failed: {resp}')
+                    resp = self._session_get_json(
+                        self._VOD_CHAT_URL.format(
+                            vod_id=vod_id, player_message_time=next_player_message_time
+                        ),
+                        cookies=self.cookies,
+                    )
+                    # NOTE: Rate limit occurred without sleeping.
+                    # It's not 429 response, but just hanging forever.
+                    sleep(random.uniform(0.1, 0.5))
 
-                    content = resp.get('content', {})
-                    next_player_message_time = content.get('nextPlayerMessageTime')
-                    chats = content.get('videoChats', [])
+                    is_valid_resp = resp.get("code") == 200
+                    if not is_valid_resp:
+                        raise UnexpectedError(f"Chzzk VOD chat retrieve failed: {resp}")
+
+                    content = resp.get("content", {})
+                    next_player_message_time = content.get("nextPlayerMessageTime")
+                    chats = content.get("videoChats", [])
                     for chat in chats:
                         data = self._parse_chat(chat)
                         yield data
-
                     break
                 except RequestException as e:
                     self.retry(attempt_number, error=e, **params)
         return
 
     def connect_websocket(self):
-        if self.websocket_thread and self.websocket_thread.is_alive():
+        if (
+            self.websocket
+            and self.websocket_thread
+            and self.websocket_thread.is_alive()
+        ):
             self.websocket.close()
 
         is_live, live_id, live_title, self.chat_channel_id = self.get_channel_detail()
         if not self.chat_channel_id:
-            raise SiteError(f'No chat channel id found for Chzzk live: {self.live_channel_id}')
+            raise SiteError(
+                f"No chat channel id found for Chzzk live: {self.live_channel_id}"
+            )
 
         if is_live:
             self.server_id = sum([ord(c) for c in self.chat_channel_id]) % 9 + 1
             self.access_token = self.get_chat_access_token()
             self.websocket = WebSocketApp(
-                url=f'wss://kr-ss{self.server_id}.chat.naver.com/chat',
+                url=f"wss://kr-ss{self.server_id}.chat.naver.com/chat",
                 on_open=self.on_open,
                 on_message=self.on_message,
                 on_error=self.on_error,
@@ -336,11 +363,11 @@ class ChzzkChatDownloader(BaseChatDownloader):
                 target=self.websocket.run_forever,
                 kwargs=dict(
                     ping_interval=20,
-                    ping_payload=orjson.dumps({'ver': '3', 'cmd': ChatCommands.PING}),
+                    ping_payload=orjson.dumps({"ver": "3", "cmd": ChatCommands.PING}),
                     # http_proxy_host=self.proxy_host,
                     # http_proxy_port=self.proxy_port
                 ),
-                daemon=True
+                daemon=True,
             )
             self.websocket_thread.start()
         return is_live, live_id, live_title
@@ -357,18 +384,25 @@ class ChzzkChatDownloader(BaseChatDownloader):
 
                 message_count += 1
                 yield data
-                log('debug', f'Total number of messages: {message_count}')
+                log("debug", f"Total number of messages: {message_count}")
         finally:
             self.terminate()
 
     def _get_chat_by_channel_id(self, match, params):
-        return self.get_chat_by_channel_id(match.group('channel_id'), params)
+        return self.get_chat_by_channel_id(match.group("channel_id"), params)
 
     def get_channel_detail(self):
         for i in range(self.max_retries):
             try:
-                live_info = self._session_get_json(self._LIVE_DETAIL_URL.format(channel_id=self.live_channel_id))['content']
-                return live_info['status'] == "OPEN", live_info['liveId'], live_info['liveTitle'], live_info['chatChannelId']
+                live_info = self._session_get_json(
+                    self._LIVE_DETAIL_URL.format(channel_id=self.live_channel_id)
+                )["content"]
+                return (
+                    live_info["status"] == "OPEN",
+                    live_info["liveId"],
+                    live_info["liveTitle"],
+                    live_info["chatChannelId"],
+                )
             except (JSONDecodeError, RequestException):
                 continue
         raise UserNotFound(f'Unable to find Chzzk channel: "{self.live_channel_id}"')
@@ -378,39 +412,43 @@ class ChzzkChatDownloader(BaseChatDownloader):
             try:
                 return self._session_get_json(
                     self._ACCESS_TOKEN_URL.format(chat_channel_id=self.chat_channel_id),
-                    cookies=self.cookies
-                )['content']['accessToken']
+                    cookies=self.cookies,
+                )["content"]["accessToken"]
             except (JSONDecodeError, RequestException):
                 continue
-        raise SiteError(f'Unable to get access token of Chzzk: "{self.chat_channel_id}"')
+        raise SiteError(
+            f'Unable to get access token of Chzzk: "{self.chat_channel_id}"'
+        )
 
     def terminate(self):
-        log('info', '###### Terminate ChzzkChatDownloader #######')
+        log("info", "###### Terminate ChzzkChatDownloader #######")
         self.terminated = True
         if self.websocket:
             self.websocket.close()
         if self.websocket_thread:
             self.websocket_thread.join(timeout=self.timeout)
             if self.websocket_thread.is_alive():
-                log('error', 'Websocket thread not closed!')
+                log("error", "Websocket thread not closed!")
 
+    # Entry point for live channel
     def get_chat_by_channel_id(self, channel_id, params):
-        # First function to be called
-
+        NID_AUT = params.get("NID_AUT")
+        NID_SES = params.get("NID_SES")
+        if NID_AUT and NID_SES:
+            self.cookies = {
+                "NID_AUT": params.get("NID_AUT"),
+                "NID_SES": params.get("NID_SES"),
+            }
         self.live_channel_id = channel_id
-        self.timeout = params.get('message_receive_timeout')
-        self.cookies = {
-            "NID_AUT": params.get('NID_AUT') or self._DEFAULT_NID_AUT,
-            "NID_SES": params.get('NID_SES') or self._DEFAULT_NID_SES
-        }
+        self.timeout = params.get("message_receive_timeout")
         if self.session.proxies:
-            proxy_full = self.session.proxies.get('https')
+            proxy_full = self.session.proxies.get("https")
             if proxy_full:
-                proxy_splitted = proxy_full.split(':')
+                proxy_splitted = proxy_full.split(":")
                 self.proxy_host = proxy_splitted[0]
                 self.proxy_port = proxy_splitted[1] if len(proxy_splitted) > 1 else None
 
-        log('info', f'params: {params}')
+        log("info", f"params: {params}")
 
         # connect websocket before
         is_live, live_id, live_title = self.connect_websocket()
@@ -419,7 +457,7 @@ class ChzzkChatDownloader(BaseChatDownloader):
             self._get_chat_messages_by_channel_id(),
             title=live_title,
             duration=None,
-            status='live' if is_live else 'upcoming',  # Always live or upcoming
-            video_type='video',
-            id=f"{live_id}:{self.chat_channel_id}"
+            status="live" if is_live else "upcoming",  # Always live or upcoming
+            video_type="video",
+            id=f"{live_id}:{self.chat_channel_id}",
         )
