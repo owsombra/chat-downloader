@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Coroutine, Optional, cast
+import logging
+from typing import Any, Callable, Coroutine, Optional, cast
 
 import orjson
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMessage, WSMsgType
@@ -9,10 +10,12 @@ from aiohttp import ClientSession, ClientWebSocketResponse, WSMessage, WSMsgType
 from .constants import CHAT_URL, FLAG, RETURN_CODE, ServiceCode
 from .credential import Credential
 from .exceptions import NotStreamingError, PasswordError
-from .interfaces import BJInfo, BroadcastInfo, Chat
+from .interfaces import BJInfo, BroadcastInfo, Chat, Donation, Mission, MissionSettle, OGQEmoticon
 from .packet import create_packet
 from .types.bj_info import BJInfo as BJInfoDict
 from .utils import Flag, callback
+
+logger = logging.getLogger(__name__)
 
 Callback = Coroutine[None, None, None]
 
@@ -110,7 +113,7 @@ class AfreecaChat:
         self.session: Optional[ClientSession] = None
         self.connection: Optional[ClientWebSocketResponse] = None
 
-        self.callbacks: dict[str, list[Callable[[Chat], Callback]]] = {}
+        self.callbacks: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = {}
         self.process_callbacks: dict[
             int, list[Callable[[AfreecaChat, list[str]], None]]
         ] = {}
@@ -119,13 +122,13 @@ class AfreecaChat:
 
         self.room_password: Optional[str] = None
 
-    def add_callback(self, event: str, callback: Callable[[Chat], Callback]) -> None:
+    def add_callback(self, event: str, callback: Callable[..., Coroutine[Any, Any, None]]) -> None:
         if self.callbacks.get(event) is None:
             self.callbacks[event] = []
 
         self.callbacks[event].append(callback)
 
-    def remove_callback(self, callback: Callable[[Chat], Callback]) -> None:
+    def remove_callback(self, callback: Callable[..., Coroutine[Any, Any, None]]) -> None:
         for event, callbacks in self.callbacks.items():
             if callback in callbacks:
                 self.callbacks[event].remove(callback)
@@ -199,10 +202,9 @@ class AfreecaChat:
         if ret_code == RETURN_CODE["PASSWORD_ERROR"]:
             raise PasswordError()
 
-        if ret_code > RETURN_CODE["SUCCESS"]:
+        if svc in (ServiceCode.SVC_LOGIN, ServiceCode.SVC_JOINCH) and ret_code > RETURN_CODE["SUCCESS"]:
             reversed_ret_code = {v: k for k, v in RETURN_CODE.items()}
-            print(f"not success ret_code: {reversed_ret_code[ret_code]}")
-
+            logger.warning(f"[svc={svc}] not success ret_code: {reversed_ret_code.get(ret_code, ret_code)}")
             return
 
         if svc == ServiceCode.SVC_LOGIN and self.info is not None:
@@ -232,7 +234,7 @@ class AfreecaChat:
                 except UnicodeDecodeError:
                     packet.append(packet_part.decode("euc-kr"))
 
-        for name in self.__dir__():
+        for name in dir(self):
             if name.startswith("_process_"):
                 func = getattr(self, name)
 
@@ -252,6 +254,71 @@ class AfreecaChat:
 
         for _callback in self.callbacks.get("chat", []):
             asyncio.create_task(_callback(chat))
+
+    @callback(ServiceCode.SVC_SENDBALLOON)
+    async def _process_balloon(self, packet: list[str]) -> None:
+        if len(packet) < 4:
+            return
+
+        donation = Donation.balloon(packet)
+
+        for _callback in self.callbacks.get("donation", []):
+            asyncio.create_task(_callback(donation))
+
+    @callback(ServiceCode.SVC_ADCON_EFFECT)
+    async def _process_adballoon(self, packet: list[str]) -> None:
+        if len(packet) < 10:
+            return
+
+        donation = Donation.ad_balloon(packet)
+
+        for _callback in self.callbacks.get("donation", []):
+            asyncio.create_task(_callback(donation))
+
+    @callback(ServiceCode.SVC_VIDEOBALLOON)
+    async def _process_videoballoon(self, packet: list[str]) -> None:
+        if len(packet) < 5:
+            return
+
+        donation = Donation.video_balloon(packet)
+
+        for _callback in self.callbacks.get("donation", []):
+            asyncio.create_task(_callback(donation))
+
+    @callback(ServiceCode.SVC_OGQ_EMOTICON)
+    async def _process_ogq_emoticon(self, packet: list[str]) -> None:
+        if len(packet) < 9:
+            return
+
+        ogq = OGQEmoticon(packet)
+
+        for _callback in self.callbacks.get("ogq_emoticon", []):
+            asyncio.create_task(_callback(ogq))
+
+    @callback(ServiceCode.SVC_MISSION)
+    async def _process_mission(self, packet: list[str]) -> None:
+        if len(packet) < 1:
+            return
+
+        mission = Mission(packet)
+
+        for _callback in self.callbacks.get("mission", []):
+            asyncio.create_task(_callback(mission))
+
+    @callback(ServiceCode.SVC_MISSION_SETTLE)
+    async def _process_mission_settle(self, packet: list[str]) -> None:
+        if len(packet) < 1:
+            return
+
+        mission_settle = MissionSettle(packet)
+
+        for _callback in self.callbacks.get("mission_settle", []):
+            asyncio.create_task(_callback(mission_settle))
+
+    @callback(ServiceCode.SVC_BROADCAST_END)
+    async def _process_broadcast_end(self, packet: list[str]) -> None:
+        for _callback in self.callbacks.get("broadcast_end", []):
+            asyncio.create_task(_callback())
 
     async def close(self) -> None:
         for event, callbacks in self.callbacks.items():
