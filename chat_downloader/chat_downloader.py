@@ -80,6 +80,9 @@ class ChatDownloader():
         # Track sessions using a dictionary (allows for reusing)
         self.sessions = {}
 
+        # Track chat generators to close their connections (e.g. websocket threads) on `close`
+        self.chat_generators = []
+
     def get_chat(self, url=None,
                  start_time=None,
                  end_time=None,
@@ -237,6 +240,8 @@ class ChatDownloader():
                     raise ChatGeneratorError(
                         f'No valid generator found in {site.__name__} for url "{url}"')
 
+                self.chat_generators.append(chat.chat)
+
                 if isinstance(params['max_messages'], int):
                     chat.chat = itertools.islice(
                         chat.chat, params['max_messages'])
@@ -318,7 +323,12 @@ class ChatDownloader():
         return self.sessions.get(chat_downloader_class.__name__)
 
     def close(self):
-        """Close all sessions associated with the object"""
+        """Close all sessions and chats associated with the object"""
+        for chat_generator in self.chat_generators:
+            chat_generator.close()
+
+        self.chat_generators = []
+
         for session in self.sessions.values():
             session.close()
 

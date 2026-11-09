@@ -161,6 +161,9 @@ class AfreecaChat:
         if not self.info:
             self.info = await AfreecaTV.fetch_bj_info(self.credential, self.bj_id)
 
+        # Close the previous session on reconnection.
+        if self.session:
+            await self.session.close()
         self.session = ClientSession()
         self.connection = await self.session.ws_connect(self.info.chat_url)
 
@@ -184,7 +187,8 @@ class AfreecaChat:
         while True:
             try:
                 await self.send(ServiceCode.SVC_KEEPALIVE, [])
-            except:
+            except Exception:
+                # NOTE: Don't catch `asyncio.CancelledError` to be able to cancel this task.
                 pass
 
             await asyncio.sleep(20)

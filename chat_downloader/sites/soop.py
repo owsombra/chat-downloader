@@ -25,7 +25,7 @@ class SoopChatDownloader(BaseChatDownloader):
     _VALID_URLS = {
         # e.g. 'https://play.sooplive.co.kr/username'
         # e.g. 'https://play.sooplive.co.kr/username/bno/'
-        "_get_chat": r"https?://play\.(?:sooplive\.co\.kr|afreecatv\.com)/(?P<username>\w+)(?:/(?P<bno>:\d+))?",
+        "_get_chat": r"https?://play\.(?:sooplive\.com|sooplive\.co\.kr|afreecatv\.com)/(?P<username>\w+)(?:/(?P<bno>\d+))?",
     }
 
     def __init__(self, **kwargs):
@@ -67,6 +67,10 @@ class SoopChatDownloader(BaseChatDownloader):
 
         self.queue.put(data)
 
+    async def _broadcast_end_callback(self):
+        log("info", "The broadcast has ended.")
+        self._stop_event.set()
+
     def afreeca_chat_recv_loop(self):
         asyncio.set_event_loop(self.loop)
         try:
@@ -75,6 +79,8 @@ class SoopChatDownloader(BaseChatDownloader):
             if not self._stop_event.is_set():
                 log("error", f"Error in recv loop: {e}")
         finally:
+            # Notify the end of messages.
+            self.queue.put(None)
             log("debug", "Async event loop finished.")
 
     async def _recv_loop_with_stop(self):
@@ -134,6 +140,9 @@ class SoopChatDownloader(BaseChatDownloader):
                     yield {}
                     continue
 
+                if data is None:
+                    return
+
                 message_count += 1
                 yield data
                 log("debug", f"Total number of messages: {message_count}")
@@ -143,24 +152,22 @@ class SoopChatDownloader(BaseChatDownloader):
             log("debug", "Cleanup afreeca chat downloader")
             self._stop_event.set()
 
-            # Schedule cleanup on the event loop in a thread-safe manner
-            try:
-                future = asyncio.run_coroutine_threadsafe(self.cleanup(), self.loop)
-                # Wait for cleanup to finish with a timeout
-                future.result(timeout=10)
-            except Exception as e:
-                log("debug", f"Cleanup future exception: {e}")
-
-            # Wait for the recv thread to finish
+            # The recv loop checks the stop event every 2 seconds.
             recv_thread.join(timeout=5)
 
-            # Now shut down the event loop cleanly
             try:
-                self.loop.call_soon_threadsafe(self.loop.stop)
-                # Give it a moment to stop
-                recv_thread.join(timeout=2)
-            except Exception:
-                pass
+                if recv_thread.is_alive():
+                    # Schedule cleanup on the running event loop in a thread-safe manner
+                    future = asyncio.run_coroutine_threadsafe(self.cleanup(), self.loop)
+                    future.result(timeout=10)
+                    self.loop.call_soon_threadsafe(self.loop.stop)
+                    recv_thread.join(timeout=2)
+                else:
+                    # The event loop has already finished, so run cleanup on it here.
+                    self.loop.run_until_complete(self.cleanup())
+                    self.loop.close()
+            except Exception as e:
+                log("debug", f"Cleanup exception: {e}")
 
             log("debug", "Session closed.")
 
@@ -188,6 +195,9 @@ class SoopChatDownloader(BaseChatDownloader):
         self.chat_loader.add_callback(event="chat", callback=self._chat_callback)
         self.chat_loader.add_callback(
             event="donation", callback=self._donation_callback
+        )
+        self.chat_loader.add_callback(
+            event="broadcast_end", callback=self._broadcast_end_callback
         )
 
         try:
