@@ -1,8 +1,8 @@
 import queue
 import random
 from json.decoder import JSONDecodeError
-from threading import Thread
-from time import sleep
+from threading import Event, Thread
+from time import sleep, time
 from typing import Optional
 
 import orjson
@@ -92,10 +92,13 @@ class ChzzkChatDownloader(BaseChatDownloader):
     _VOD_DETAIL_URL = "https://api.chzzk.naver.com/service/v3/videos/{vod_id}"
     _VOD_CHAT_URL = "https://api.chzzk.naver.com/service/v1/videos/{vod_id}/chats?playerMessageTime={player_message_time}"
 
+    _MIN_RECONNECT_DELAY = 1
+    _MAX_RECONNECT_DELAY = 60
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.queue = queue.Queue()
-        self.terminated = False
+        self.terminate_event = Event()
         self.chat_channel_id = None
         self.live_channel_id = None
         self.cookies = None
@@ -157,14 +160,8 @@ class ChzzkChatDownloader(BaseChatDownloader):
         log("error", f"Websocket Error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        # probably only when server requested to close
-        log("info", "### Websocket closed ###")
-        if not self.terminated:
-            # not closed by request, try again
-            is_live, _, _ = self.connect_websocket()
-            if not is_live:
-                # do not retry if not live
-                self.terminate()
+        # Reconnection is handled by `keep_websocket_connected`.
+        log("info", f"### Websocket closed ({close_status_code}: {close_msg}) ###")
 
     def on_open(self, ws):
         log("info", "Opened connection")
@@ -334,14 +331,10 @@ class ChzzkChatDownloader(BaseChatDownloader):
                     self.retry(attempt_number, error=e, **params)
         return
 
-    def connect_websocket(self):
-        if (
-            self.websocket
-            and self.websocket_thread
-            and self.websocket_thread.is_alive()
-        ):
-            self.websocket.close()
-
+    def create_websocket(self):
+        """
+        Create a websocket for the current live with a new access token. The websocket is not created if not live.
+        """
         is_live, live_id, live_title, self.chat_channel_id = self.get_channel_detail()
         if not self.chat_channel_id:
             raise SiteError(
@@ -359,18 +352,39 @@ class ChzzkChatDownloader(BaseChatDownloader):
                 on_close=self.on_close,
                 on_reconnect=self.on_open,
             )
-            self.websocket_thread = Thread(
-                target=self.websocket.run_forever,
-                kwargs=dict(
+        return is_live, live_id, live_title
+
+    def keep_websocket_connected(self):
+        """
+        Run the websocket, and reconnect it until terminated or the live ends.
+        """
+        reconnect_delay = self._MIN_RECONNECT_DELAY
+        try:
+            while not self.terminate_event.is_set():
+                connected_at = time()
+                self.websocket.run_forever(
                     ping_interval=20,
                     ping_payload=orjson.dumps({"ver": "3", "cmd": ChatCommands.PING}),
-                    # http_proxy_host=self.proxy_host,
-                    # http_proxy_port=self.proxy_port
-                ),
-                daemon=True,
-            )
-            self.websocket_thread.start()
-        return is_live, live_id, live_title
+                )
+                # Reset the delay if the connection has been kept long enough.
+                if time() - connected_at > self._MAX_RECONNECT_DELAY:
+                    reconnect_delay = self._MIN_RECONNECT_DELAY
+
+                while not self.terminate_event.wait(reconnect_delay):
+                    reconnect_delay = min(reconnect_delay * 2, self._MAX_RECONNECT_DELAY)
+                    try:
+                        is_live, _, _ = self.create_websocket()
+                    except Exception as e:
+                        log("error", f"Failed to reconnect the websocket: {e}")
+                        continue
+
+                    if not is_live:
+                        log("info", f"The live has ended: {self.live_channel_id}")
+                        return
+                    break
+        finally:
+            # Notify the end of messages.
+            self.queue.put(None)
 
     def _get_chat_messages_by_channel_id(self):
         message_count = 0
@@ -381,6 +395,9 @@ class ChzzkChatDownloader(BaseChatDownloader):
                 except queue.Empty:
                     yield {}
                     continue
+
+                if data is None:
+                    return
 
                 message_count += 1
                 yield data
@@ -422,7 +439,7 @@ class ChzzkChatDownloader(BaseChatDownloader):
 
     def terminate(self):
         log("info", "###### Terminate ChzzkChatDownloader #######")
-        self.terminated = True
+        self.terminate_event.set()
         if self.websocket:
             self.websocket.close()
         if self.websocket_thread:
@@ -451,7 +468,13 @@ class ChzzkChatDownloader(BaseChatDownloader):
         log("info", f"params: {params}")
 
         # connect websocket before
-        is_live, live_id, live_title = self.connect_websocket()
+        is_live, live_id, live_title = self.create_websocket()
+        if is_live:
+            self.websocket_thread = Thread(target=self.keep_websocket_connected, daemon=True)
+            self.websocket_thread.start()
+        else:
+            # No messages for the offline channel.
+            self.queue.put(None)
 
         return Chat(
             self._get_chat_messages_by_channel_id(),
